@@ -314,7 +314,14 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#06070a] text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-[#06070a] text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white relative">
+      {/* Fixed Ambient Glow Orbs (constant, minimal dark aesthetic) */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden -z-10">
+        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[1000px] h-[450px] bg-gradient-to-b from-indigo-600/12 via-purple-600/6 to-transparent blur-[140px] rounded-full" />
+        <div className="absolute top-1/3 -right-32 w-[600px] h-[500px] bg-gradient-to-l from-indigo-500/6 to-transparent blur-[130px] rounded-full" />
+        <div className="absolute bottom-10 -left-32 w-[600px] h-[500px] bg-gradient-to-r from-purple-500/6 to-transparent blur-[130px] rounded-full" />
+      </div>
+
       {/* Top Navbar */}
       <Navbar
         onSelectPreset={handleSelectPreset}

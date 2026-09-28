@@ -121,6 +121,21 @@ export default function LandingHero({
             </button>
           </div>
         </form>
+
+        {/* Quick popular target pills */}
+        <div className="mt-3.5 flex flex-wrap items-center justify-center gap-2 text-xs">
+          <span className="text-slate-500 text-[11px]">Quick test:</span>
+          {["https://linear.app", "https://stripe.com", "https://supabase.com", "https://vercel.com", "https://resend.com"].map((u) => (
+            <button
+              key={u}
+              type="button"
+              onClick={() => setUrlInput(u)}
+              className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-white/[0.03] hover:bg-white/[0.08] text-slate-400 hover:text-indigo-300 border border-white/5 transition-colors"
+            >
+              {u.replace("https://", "")}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Preset Evaluation Benchmarks */}
