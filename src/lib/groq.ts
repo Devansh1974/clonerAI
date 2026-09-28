@@ -1,39 +1,88 @@
 import Groq from "groq-sdk";
 import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 import { GenerateRequest, GenerateResult, ModifyRequest, ModifyResult, HealRequest, HealResult } from "./types";
 import { extractCodeBlock } from "./gemini";
 
-// Helper to get an active LLM client for text-based generation and modifications
-function getClient(customKey?: { groq?: string; openai?: string; gemini?: string }) {
+// Helper to execute completions with multi-provider fallback: Groq -> OpenAI -> Gemini
+async function executeChatCompletion(
+  prompt: string,
+  customKey?: { groq?: string; openai?: string; gemini?: string },
+  temperature = 0.2
+): Promise<{ text: string; provider: string; model: string }> {
   const groqKey = customKey?.groq || process.env.GROQ_API_KEY;
-  if (groqKey) {
-    return {
-      type: "groq" as const,
-      client: new Groq({ apiKey: groqKey }),
-      model: "llama-3.3-70b-versatile",
-    };
-  }
-
   const openAiKey = customKey?.openai || process.env.OPENAI_API_KEY;
+  const geminiKey = customKey?.gemini || process.env.GEMINI_API_KEY;
+
+  // 1. Try OpenAI if key is configured (high reliability & quota)
   if (openAiKey) {
-    return {
-      type: "openai" as const,
-      client: new OpenAI({ apiKey: openAiKey }),
-      model: "gpt-4o",
-    };
+    try {
+      const openai = new OpenAI({ apiKey: openAiKey });
+      const res = await openai.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "gpt-4o",
+        temperature,
+      });
+      const text = res.choices[0]?.message?.content || "";
+      if (text) {
+        return { text, provider: "openai", model: "gpt-4o" };
+      }
+    } catch (err: any) {
+      console.warn("OpenAI completion failed, trying next provider:", err?.message);
+    }
   }
 
-  return null;
+  // 2. Try Groq if key is configured
+  if (groqKey) {
+    const groq = new Groq({ apiKey: groqKey });
+    const groqCandidateModels = [
+      "openai/gpt-oss-120b",
+      "llama-3.3-70b-versatile",
+      "qwen/qwen3.8-27b",
+      "openai/gpt-oss-20b",
+    ];
+
+    for (const model of groqCandidateModels) {
+      try {
+        const res = await groq.chat.completions.create({
+          messages: [{ role: "user", content: prompt }],
+          model,
+          temperature,
+          max_tokens: 4096,
+        });
+        const text = res.choices[0]?.message?.content || "";
+        if (text) {
+          return { text, provider: "groq", model };
+        }
+      } catch (err: any) {
+        console.warn(`Groq with model ${model} failed:`, err?.message);
+      }
+    }
+  }
+
+  // 3. Try Gemini (gemini-3.8-flash) as high-speed text completion fallback
+  if (geminiKey) {
+    try {
+      const ai = new GoogleGenAI({ apiKey: geminiKey });
+      const res = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: [{ text: prompt }],
+      });
+      const text = res.text || "";
+      if (text) {
+        return { text, provider: "gemini", model: "gemini-3.8-flash" };
+      }
+    } catch (err: any) {
+      console.warn("Gemini text completion fallback failed:", err?.message);
+    }
+  }
+
+  throw new Error("All configured AI providers (OpenAI, Groq, Gemini) failed to generate completion.");
 }
 
-// 1. Initial Generation Fallback via Groq / LLaMA
+// 1. Initial Generation Fallback
 export async function generateWithGroqFallback(request: GenerateRequest): Promise<GenerateResult> {
   const startTime = Date.now();
-  const clientInfo = getClient(request.customApiKey);
-
-  if (!clientInfo) {
-    throw new Error("No Groq or OpenAI API key configured for fallback generation.");
-  }
 
   const prompt = `You are an expert Frontend AI Engineer. Your goal is to recreate a website's UI based on extracted HTML/DOM structure and design tokens. You must generate a SINGLE-FILE React component using Tailwind CSS that looks visually stunning and professional.
 
@@ -58,75 +107,21 @@ Sections: ${JSON.stringify(request.metadata?.sections || [])}
 SIMPLIFIED SEMANTIC DOM STRUCTURE:
 ${request.simplifiedDom}`;
 
-  let content = "";
-  if (clientInfo.type === "groq") {
-    const res = await (clientInfo.client as Groq).chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: clientInfo.model,
-      temperature: 0.3,
-      max_tokens: 4096,
-    });
-    content = res.choices[0]?.message?.content || "";
-  } else {
-    const res = await (clientInfo.client as OpenAI).chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: clientInfo.model,
-      temperature: 0.3,
-    });
-    content = res.choices[0]?.message?.content || "";
-  }
+  const completion = await executeChatCompletion(prompt, request.customApiKey, 0.3);
+  const cleanCode = extractCodeBlock(completion.text);
 
-  const cleanCode = extractCodeBlock(content);
   return {
     success: true,
     code: cleanCode,
-    provider: clientInfo.type,
-    model: clientInfo.model,
+    provider: completion.provider as any,
+    model: completion.model,
     durationMs: Date.now() - startTime,
   };
 }
 
-// 2. Natural Language Modification via Groq / LLM
+// 2. Natural Language Modification
 export async function modifyCodeWithLLM(request: ModifyRequest): Promise<ModifyResult> {
   const startTime = Date.now();
-  const clientInfo = getClient(request.customApiKey);
-
-  if (!clientInfo) {
-    // If no Groq/OpenAI key, check if Gemini key is available as alternative
-    const geminiKey = request.customApiKey?.gemini || process.env.GEMINI_API_KEY;
-    if (geminiKey) {
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const prompt = `You are an expert React developer. You will be provided with an existing React component and a specific instruction from the user on how to modify it.
-
-USER INSTRUCTION: ${request.userPrompt}
-
-CRITICAL RULES:
-1. Apply the requested changes flawlessly to the provided code.
-2. Maintain the existing layout, structure, and design for anything not explicitly mentioned in the instruction.
-3. Do not add comments explaining your changes.
-4. Output the FULL, updated React file wrapped in a \`\`\`tsx block so it can be directly piped into a code runner.
-5. Ensure the code remains syntactically correct and uses Tailwind CSS.
-
-EXISTING CODE:
-${request.currentCode}`;
-
-      const res = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ text: prompt }],
-      });
-      const code = extractCodeBlock(res.text || "");
-      return {
-        success: true,
-        updatedCode: code,
-        summary: `Applied "${request.userPrompt}" using Gemini 2.5 Flash`,
-        provider: "gemini",
-        durationMs: Date.now() - startTime,
-      };
-    }
-
-    throw new Error("No API key available (Groq, OpenAI, or Gemini) to process code modification.");
-  }
 
   const prompt = `You are an expert React developer. You will be provided with an existing React component and a specific instruction from the user on how to modify it.
 
@@ -142,30 +137,14 @@ CRITICAL RULES:
 EXISTING CODE:
 ${request.currentCode}`;
 
-  let content = "";
-  if (clientInfo.type === "groq") {
-    const res = await (clientInfo.client as Groq).chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: clientInfo.model,
-      temperature: 0.2,
-      max_tokens: 4096,
-    });
-    content = res.choices[0]?.message?.content || "";
-  } else {
-    const res = await (clientInfo.client as OpenAI).chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: clientInfo.model,
-      temperature: 0.2,
-    });
-    content = res.choices[0]?.message?.content || "";
-  }
+  const completion = await executeChatCompletion(prompt, request.customApiKey, 0.2);
+  const cleanCode = extractCodeBlock(completion.text);
 
-  const cleanCode = extractCodeBlock(content);
   return {
     success: true,
     updatedCode: cleanCode,
-    summary: `Applied: "${request.userPrompt}"`,
-    provider: clientInfo.type,
+    summary: `Applied "${request.userPrompt}" via ${completion.provider} (${completion.model})`,
+    provider: completion.provider as any,
     durationMs: Date.now() - startTime,
   };
 }
@@ -173,7 +152,6 @@ ${request.currentCode}`;
 // 3. Self-Healing Build Error Recovery
 export async function healCodeWithLLM(request: HealRequest): Promise<HealResult> {
   const startTime = Date.now();
-  const clientInfo = getClient(request.customApiKey);
 
   const prompt = `You are an expert React and TypeScript engineer. The following React component failed to compile or threw an error in a Sandpack sandbox.
 
@@ -189,26 +167,19 @@ CRITICAL RULES:
 3. Output the FULL, valid, corrected React code wrapped in a \`\`\`tsx block so it can be directly piped into a code runner.
 4. No conversational text or explanations.`;
 
-  if (!clientInfo) {
-    const geminiKey = request.customApiKey?.gemini || process.env.GEMINI_API_KEY;
-    if (geminiKey) {
-      const { GoogleGenAI } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey: geminiKey });
-      const res = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [{ text: prompt }],
-      });
-      const code = extractCodeBlock(res.text || "");
-      return {
-        success: true,
-        healedCode: code,
-        errorSummary: `Repaired error: ${request.errorMessage.slice(0, 100)}`,
-        provider: "gemini",
-        durationMs: Date.now() - startTime,
-      };
-    }
+  try {
+    const completion = await executeChatCompletion(prompt, request.customApiKey, 0.1);
+    const cleanCode = extractCodeBlock(completion.text);
 
-    // Local programmatic healing heuristic fallback (e.g. missing React import or lucide icon)
+    return {
+      success: true,
+      healedCode: cleanCode,
+      errorSummary: `Auto-healed: ${request.errorMessage.slice(0, 80)}`,
+      provider: completion.provider,
+      durationMs: Date.now() - startTime,
+    };
+  } catch (err: any) {
+    console.warn("LLM healing failed, applying heuristic fallback:", err?.message);
     let repaired = request.currentCode;
     if (!repaired.includes("import React")) {
       repaired = `import React from 'react';\n` + repaired;
@@ -221,31 +192,4 @@ CRITICAL RULES:
       durationMs: Date.now() - startTime,
     };
   }
-
-  let content = "";
-  if (clientInfo.type === "groq") {
-    const res = await (clientInfo.client as Groq).chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: clientInfo.model,
-      temperature: 0.1,
-      max_tokens: 4096,
-    });
-    content = res.choices[0]?.message?.content || "";
-  } else {
-    const res = await (clientInfo.client as OpenAI).chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: clientInfo.model,
-      temperature: 0.1,
-    });
-    content = res.choices[0]?.message?.content || "";
-  }
-
-  const cleanCode = extractCodeBlock(content);
-  return {
-    success: true,
-    healedCode: cleanCode,
-    errorSummary: `Auto-healed: ${request.errorMessage.slice(0, 80)}`,
-    provider: clientInfo.type,
-    durationMs: Date.now() - startTime,
-  };
 }

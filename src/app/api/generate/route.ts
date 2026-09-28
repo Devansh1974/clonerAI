@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
 
         // Generic intelligent scaffold generation from scraped tokens
         const primaryColor = body.metadata?.colors?.[0]?.hex || "#4f46e5";
-        const title = body.metadata?.title || "Cloned Application";
+        const cleanTitle = (body.metadata?.title || "Cloned Application").replace(/[<>{}]/g, "").slice(0, 80);
         const sections = body.metadata?.sections || [];
 
         const scaffoldCode = `import React, { useState } from 'react';
@@ -72,7 +72,7 @@ export default function GeneratedWebsite() {
             <div className="w-8 h-8 rounded-lg bg-[${primaryColor}] flex items-center justify-center text-white">
               <Layers className="w-4 h-4" />
             </div>
-            <span>${title.split("—")[0].split("|")[0].trim()}</span>
+            <span>${cleanTitle.split("—")[0].split("|")[0].trim()}</span>
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm text-slate-300">
             <a href="#features" className="hover:text-white transition-colors">Features</a>
@@ -91,11 +91,11 @@ export default function GeneratedWebsite() {
           <Sparkles className="w-3.5 h-3.5" />
           <span>Synthesized Frontend Prototype</span>
         </div>
-        <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight mb-6">
-          ${title}
+        <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-6">
+          ${cleanTitle}
         </h1>
-        <p className="text-lg text-slate-400 max-w-2xl mx-auto mb-10">
-          Reconstructed layout matching typography and color palette from ${body.url}.
+        <p className="text-base md:text-lg text-slate-400 max-w-2xl mx-auto mb-10">
+          Reconstructed layout matching typography and color palette from ${body.url.replace(/[<>{}]/g, "")}.
         </p>
         <div className="flex justify-center gap-4">
           <button className="px-6 py-3 rounded-full bg-[${primaryColor}] text-white font-medium text-sm flex items-center gap-2 shadow-lg">
@@ -117,8 +117,8 @@ export default function GeneratedWebsite() {
             <div className="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400 mb-4">
               <Zap className="w-5 h-5" />
             </div>
-            <h3 className="font-semibold text-white mb-2">${s.heading || `Section ${i + 1}`}</h3>
-            <p className="text-xs text-slate-400">${s.summary.replace(/"/g, "'")}</p>
+            <h3 className="font-semibold text-white mb-2">${(s.heading || `Section ${i + 1}`).replace(/[<>{}]/g, "").slice(0, 50)}</h3>
+            <p className="text-xs text-slate-400">${(s.summary || "Section content").replace(/<[^>]*>/g, "").replace(/[<>{}"']/g, " ").slice(0, 150)}</p>
           </div>`
             )
             .join("\n")}
@@ -127,7 +127,7 @@ export default function GeneratedWebsite() {
 
       {/* Footer */}
       <footer className="py-10 px-6 border-t border-slate-800 text-xs text-slate-500 text-center">
-        <p>Synthesized by AI Website Cloner Agent. Add your Gemini or Groq API keys in the Settings modal for full visual cloning.</p>
+        <p>© 2026 AI Website Cloner Agent. Generated for ${body.url.replace(/[<>{}]/g, "")}.</p>
       </footer>
     </div>
   );

@@ -47,10 +47,25 @@ function SandpackErrorWatcher({
     // Check if sandpack has active compilation or runtime error
     const activeError = sandpack.error;
     if (activeError && activeError.message) {
-      if (lastReportedError.current !== activeError.message) {
-        lastReportedError.current = activeError.message;
-        console.warn("[Sandpack Runtime Error Caught]:", activeError.message);
-        onCatchError(activeError.message);
+      const msg = activeError.message;
+      const isSyntaxOrRuntime =
+        msg.includes("Error") ||
+        msg.includes("is not defined") ||
+        msg.includes("SyntaxError") ||
+        msg.includes("Module not found") ||
+        msg.includes("Cannot find module") ||
+        msg.includes("Unexpected token") ||
+        msg.includes("Parse error");
+
+      const isNetworkNoise =
+        msg.includes("Failed to fetch") ||
+        msg.includes("Load failed") ||
+        msg.includes("NetworkError");
+
+      if (isSyntaxOrRuntime && !isNetworkNoise && lastReportedError.current !== msg) {
+        lastReportedError.current = msg;
+        console.warn("[Sandpack Runtime Error Intercepted for Healing]:", msg);
+        onCatchError(msg);
       }
     }
   }, [sandpack.error, onCatchError]);

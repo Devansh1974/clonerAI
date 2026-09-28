@@ -64,24 +64,33 @@ Now generate the complete, production-grade, visually stunning single-file React
 
   parts.push({ text: contextPrompt });
 
-  // Try gemini-2.5-flash first, fallback to gemini-2.0-flash if needed
+  // Try gemini-3.8-flash first (standard for modern Google AI Studio keys)
   let responseText = "";
-  let modelUsed = "gemini-2.5-flash";
+  let modelUsed = "gemini-3.8-flash";
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.8-flash",
       contents: parts,
     });
     responseText = response.text || "";
   } catch (err: any) {
-    console.warn("gemini-2.5-flash call failed, trying gemini-2.0-flash:", err?.message);
-    modelUsed = "gemini-2.0-flash";
-    const fallbackResponse = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: parts,
-    });
-    responseText = fallbackResponse.text || "";
+    console.warn("gemini-3.8-flash call failed, trying gemini-2.5-flash:", err?.message);
+    try {
+      modelUsed = "gemini-2.5-flash";
+      const fallbackResponse = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: parts,
+      });
+      responseText = fallbackResponse.text || "";
+    } catch {
+      modelUsed = "gemini-2.0-flash";
+      const fallbackResponse2 = await ai.models.generateContent({
+        model: "gemini-2.0-flash",
+        contents: parts,
+      });
+      responseText = fallbackResponse2.text || "";
+    }
   }
 
   const cleanCode = extractCodeBlock(responseText);
